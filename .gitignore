@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# IDE
+.idea/
+
+# 本地数据（聊天历史、记忆）
+data/
+
+# OS
+.DS_Store
+
+# Local container deployment secrets
+.env
+.env.*
+!.env.example
+
+# Local state archives, restore staging and process lock
+backups/
+nekobot-backup-*.zip
+.nekobot-*
+.nekobot.lock
