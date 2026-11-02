@@ -1,0 +1,15 @@
+[project]
+name = "nekobot"
+version = "0.1.0"
+description = "A multi-platform QQ and Feishu bot with native DeepSeek multimodal conversations."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.27",
+    "websockets>=13",
+    "lark-oapi>=1.6",
+]
+
+[tool.uv]
+# Run this application with `uv run bot.py`; do not build/install the flat source tree.
+package = false
