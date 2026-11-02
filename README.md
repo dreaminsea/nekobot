@@ -74,7 +74,7 @@ uv 会在项目目录下创建 `.venv` 并安装 `uv.lock` 中锁定的精确版
 cp .env.example .env && chmod 600 .env
 ```
 
-然后编辑 `.env`，至少填写：
+然后编辑 `.env`（或者直接运行 `python3 configure.py env` 按提示逐项填写，见[命令行配置工具](#命令行配置工具configurepy)），至少填写：
 
 ```ini
 LLM_API_KEY=sk-xxxxxxxx      # 模型 API Key
@@ -96,6 +96,8 @@ MASTER_FEISHU=ou_xxxxxxxx    # 主人飞书 open_id
 - `SYSTEM_PROMPT`：人设。
 - `GROUP_TRIGGER`：群聊触发前缀，默认 `bot`、`/chat`。
 - `BOT_NAMES`：群友对 bot 的常用称呼，帮助模型判断「是不是在叫你」。
+
+这些也可以用 `python3 configure.py config` 在菜单里修改；`python3 configure.py show` 会列出当前配置并提示漏填的项。
 
 ### 5. 启动
 
@@ -184,6 +186,31 @@ bot 使用 lark-oapi 的**长连接**模式接收事件，不需要公网地址�
 - `.env` 的值只解析给 `config.py` 使用，不写入进程环境，bot 运行的外部命令（如 NapCat 重启）不会继承这些密钥。
 - 格式错误的行会让启动失败并报告行号（不回显内容）。
 - 改了 `.env` 或 `config.py` 都需要 `/restart`（或重启进程），`/reload` 不会重新读取。
+
+### 命令行配置工具（`configure.py`）
+
+不想手动编辑文件时，可以用自带的交互式配置工具。它只依赖 Python 标准库，系统自带的 `python3`（3.9 及以上）就能运行，不需要先 `uv sync`：
+
+```bash
+python3 configure.py            # 菜单：.env / config.py / 查看并检查
+python3 configure.py env        # 逐项填写 .env；不存在时从 .env.example 创建（权限 0600）
+python3 configure.py config     # 修改 config.py 的常用项，菜单里输入 a 切换到全部配置
+python3 configure.py show       # 查看当前配置（密钥打码），并检查漏填、格式错误等常见问题
+```
+
+- 填 `.env` 时回车保留当前值，输入 `-` 清空；密钥输入不回显。未启用平台（`PLATFORMS`）的项会跳过，`env --all` 全部询问。
+- 修改 `config.py` 时只替换值本身，注释和格式保持不变，也不会执行配置文件。布尔值输入 `y` / `n`，列表用逗号分隔，
+  数字可以写 `8 * 1024 * 1024` 这样的算式。f-string、`env()` 读取的项和多行提示词（如 `SYSTEM_PROMPT`）只展示，需要直接编辑文件。
+- 写入前会重新解析校验，再原子替换文件。改完照常需要 `/restart`。
+
+也可以非交互地修改，工具会自动判断写进 `.env` 还是 `config.py`，适合脚本或部署时使用：
+
+```bash
+python3 configure.py set PLATFORMS=onebot MASTER_QQ=10001 LLM_MODEL=deepseek-chat
+python3 configure.py unset DEEPSEEK_SEARCH_API_KEY   # 删除 .env 中的键，恢复默认行为
+```
+
+密钥写在命令行里会留在 shell 历史中，建议用 `env` 交互填写。
 
 ### `.env` 键一览
 
@@ -775,6 +802,7 @@ bot.py               # 入口：获取进程锁、创建 adapter、事件分发�
 config.py            # 行为配置（密钥从 .env 读取）
 .env.example         # .env 模板
 backup.py            # 离线导出 / 校验 / 恢复命令行
+configure.py         # 交互式配置 .env / config.py 的命令行工具
 adapters/            # 平台适配器（自动注册）
   onebot.py          #   OneBot/QQ：WS 长连接、消息段解析与发送
   onebot_messages.py #   QQ 消息段 / CQ 码、转发入口与单层内容解析
