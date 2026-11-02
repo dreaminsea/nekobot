@@ -231,6 +231,32 @@ class BackupTests(unittest.TestCase):
         self.assertEqual(backup._settings(self.target, None, None),
                          {'DATA_DIR': 'data-2', 'STICKER_DIR': 'stickers-2'})
 
+    def test_local_config_overrides_data_dir_and_receives_relocation(self):
+        data = self.base / 'local-data'
+        self.write(data, 'memories.json', '["from local config"]')
+        defaults = ('from core.local_config import load_local\nDATA_DIR = "data"\nSTICKER_DIR = "stickers"\n'
+                    'globals().update(load_local(globals()))\n')
+        for root in (self.source, self.target):
+            self.write(root, 'config.py', defaults)
+        self.write(self.source, 'config.local.py', f'# 本地\nDATA_DIR = {str(data)!r}  # 外部目录\n')
+        self.assertEqual(backup._settings(self.source, None, None)['DATA_DIR'], str(data))
+        self.export()
+        backup.restore_backup(self.target, self.archive)
+        # 改写只发生在本地文件里，随代码更新的 config.py 保持原样
+        self.assertEqual((self.target / 'config.py').read_text(), defaults)
+        self.assertEqual((self.target / 'config.local.py').read_text(), "# 本地\nDATA_DIR = 'data'  # 外部目录\n")
+        self.assertEqual((self.target / 'data/memories.json').read_text(), '["from local config"]')
+        self.assertEqual(backup._settings(self.target, None, None)['DATA_DIR'], 'data')
+
+    def test_local_config_is_ignored_by_old_config_and_complex_values_need_flags(self):
+        self.write(self.source, 'config.local.py', 'DATA_DIR = "elsewhere"\n')
+        self.assertEqual(backup._settings(self.source, None, None)['DATA_DIR'], 'data')  # 旧版 config.py 不读本地文件
+        self.write(self.source, 'config.py', CONFIG + 'globals().update(load_local(globals()))\n')
+        self.write(self.source, 'config.local.py', 'if True:\n    DATA_DIR = "elsewhere"\n')
+        with self.assertRaisesRegex(backup.BackupError, 'config.local.py'):
+            backup._settings(self.source, None, None)
+        self.assertEqual(backup._settings(self.source, 'state', None)['DATA_DIR'], 'state')
+
     def test_custom_nested_relative_data_and_sticker_directories(self):
         self.write(self.source, 'config.py', 'DATA_DIR = "state/bot"\nSTICKER_DIR = "../pictures"\n')
         self.write(self.source, 'state/bot/memories.json', '["custom"]')

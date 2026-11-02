@@ -19,6 +19,9 @@ data/
 .env.*
 !.env.example
 
+# 个人配置（覆盖 config.py 的默认值）
+config.local.py
+
 # Local state archives, restore staging and process lock
 backups/
 nekobot-backup-*.zip

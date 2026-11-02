@@ -88,16 +88,26 @@ MASTER_FEISHU=ou_xxxxxxxx    # 主人飞书 open_id
 
 全部可用的键见 [`.env` 键一览](#env-键一览)。
 
-### 4. 调整行为配置（`config.py`）
+### 4. 调整行为配置（`config.local.py`）
 
-`config.py` 只放行为配置。第一次运行通常只需要看这几项：
+`config.py` 里是所有行为配置的**默认值**，随代码一起更新，不要直接改。要改哪项，就在项目根目录新建
+`config.local.py`（已在 `.gitignore` 中），只写要改的项：
+
+```python
+PLATFORMS = ["onebot"]              # 只用 QQ
+GROUP_TRIGGER = ["bot", "/neko"]
+BOT_NAMES = BOT_NAMES + ["小喵"]    # 可以引用 config.py 里的默认值
+```
+
+第一次运行通常只需要看这几项：
 
 - `PLATFORMS`：要启用的平台，默认 `["onebot", "feishu"]`，只用一个就只留一个。
 - `SYSTEM_PROMPT`：人设。
 - `GROUP_TRIGGER`：群聊触发前缀，默认 `bot`、`/chat`。
 - `BOT_NAMES`：群友对 bot 的常用称呼，帮助模型判断「是不是在叫你」。
 
-这些也可以用 `python3 configure.py config` 在菜单里修改；`python3 configure.py show` 会列出当前配置并提示漏填的项。
+这些也可以用 `python3 configure.py config` 在菜单里修改（会自动写进 `config.local.py`）；
+`python3 configure.py show` 会列出当前配置并提示漏填的项。
 
 ### 5. 启动
 
@@ -132,8 +142,8 @@ bot 作为 WebSocket **客户端**主动连接 NapCat 的正向 WebSocket 服务
 - **群聊戳一戳**需要 NapCat 的 Packet 发包能力；合并转发读取在常规获取失败时也会走 Packet 回退。
   主人私聊 `/probe` 可以看到 NapCat 版本和 `nc_get_packet_status`。该状态只证明基础 Packet 连接，
   不代表发包一定成功。
-- **掉线监控 / 远程重启**假设使用 NapCat 安装脚本提供的 `napcat` 命令和默认路径，路径不同请改
-  `config.py` 中的 `NAPCAT_RESTART_CMD`、`NAPCAT_LOG_PATH`、`NAPCAT_QR_PATH`。
+- **掉线监控 / 远程重启**假设使用 NapCat 安装脚本提供的 `napcat` 命令和默认路径，路径不同请在
+  `config.local.py` 里设置 `NAPCAT_RESTART_CMD`、`NAPCAT_LOG_PATH`、`NAPCAT_QR_PATH`。
 
 ### 飞书 / Lark
 
@@ -164,50 +174,64 @@ bot 使用 lark-oapi 的**长连接**模式接收事件，不需要公网地址�
 
 ### 只用一个平台
 
-把 `PLATFORMS` 改成 `["onebot"]` 或 `["feishu"]` 即可，另一平台的配置留空不影响启动。
+在 `config.local.py` 里写 `PLATFORMS = ["onebot"]` 或 `PLATFORMS = ["feishu"]` 即可，另一平台的配置留空不影响启动。
 注意 [QQ 掉线监控](#qq-掉线监控) 需要两个平台同时启用（用飞书报告 QQ 掉线）。
 
 ---
 
 ## 配置说明
 
-配置分两处：
+配置分三处，自己改的只有前两个，都不进 Git，所以 `/update` 拉取代码不会和本地配置冲突：
 
 | 文件 | 放什么 | 是否提交到 Git |
 | --- | --- | --- |
 | `.env` | 密钥、token、主人 / 管理员 / bot 账号、群号 | **否**（已在 `.gitignore`） |
-| `config.py` | 所有行为配置：平台、模型参数、提示词、阈值、开关 | 是 |
+| `config.local.py` | 你改过的行为配置，只写和默认值不同的项 | **否**（已在 `.gitignore`） |
+| `config.py` | 所有行为配置的默认值：平台、模型参数、提示词、阈值、开关 | 是，随代码更新 |
 
-加载规则：
+`config.local.py` 的规则：
+
+- 它是普通的 Python 文件，在 `config.py` 默认值的基础上执行，所以可以引用默认值、`env()` 和其他配置，
+  例如 `BOT_NAMES = BOT_NAMES + ["小喵"]`；顶层赋值的大写名字就是要覆盖的配置项。
+- 依赖被改项的默认值会自动重新计算：例如改了 `LLM_MODEL`，`AMBIENT_REPLY_MODEL` 也跟着变；
+  把 `LLM_BASE_URL` 换成其他供应商，联网搜索就不再复用 `LLM_API_KEY`。单独写了的项以你写的为准。
+- 写了 `config.py` 里没有的名字（比如拼错）也会生效，但启动时会在 stderr 提示，`configure.py show` 也会提醒。
+- 想改人设等多行提示词：把 `config.py` 里的整段赋值复制过来再改（`configure.py config` 里输入名字可自动复制）。
+  复制后这一项就不再跟随 `config.py` 的更新。
+- 密钥和账号仍写在 `.env`，不要写进 `config.local.py`。
+
+`.env` 的加载规则：
 
 - `.env` 位于项目根目录，与启动时所在的目录无关。格式为常见的 dotenv：`KEY=VALUE`，`#` 开头是注释，
   支持 `export ` 前缀和单 / 双引号；未加引号的值里，空白后的 ` #` 视为行内注释。
 - **同名进程环境变量优先于 `.env`**，便于 systemd / Docker 注入。
 - `.env` 的值只解析给 `config.py` 使用，不写入进程环境，bot 运行的外部命令（如 NapCat 重启）不会继承这些密钥。
 - 格式错误的行会让启动失败并报告行号（不回显内容）。
-- 改了 `.env` 或 `config.py` 都需要 `/restart`（或重启进程），`/reload` 不会重新读取。
+- 改了 `.env`、`config.local.py` 或 `config.py` 都需要 `/restart`（或重启进程），`/reload` 不会重新读取。
 
 ### 命令行配置工具（`configure.py`）
 
 不想手动编辑文件时，可以用自带的交互式配置工具。它只依赖 Python 标准库，系统自带的 `python3`（3.9 及以上）就能运行，不需要先 `uv sync`：
 
 ```bash
-python3 configure.py            # 菜单：.env / config.py / 查看并检查
+python3 configure.py            # 菜单：.env / 行为配置 / 查看并检查
 python3 configure.py env        # 逐项填写 .env；不存在时从 .env.example 创建（权限 0600）
-python3 configure.py config     # 修改 config.py 的常用项，菜单里输入 a 切换到全部配置
-python3 configure.py show       # 查看当前配置（密钥打码），并检查漏填、格式错误等常见问题
+python3 configure.py config     # 修改行为配置的常用项，菜单里输入 a 切换到全部配置
+python3 configure.py show       # 查看当前配置（密钥打码、标出本地改过的项），并检查漏填、拼写错误等常见问题
 ```
 
 - 填 `.env` 时回车保留当前值，输入 `-` 清空；密钥输入不回显。未启用平台（`PLATFORMS`）的项会跳过，`env --all` 全部询问。
-- 修改 `config.py` 时只替换值本身，注释和格式保持不变，也不会执行配置文件。布尔值输入 `y` / `n`，列表用逗号分隔，
-  数字可以写 `8 * 1024 * 1024` 这样的算式。f-string、`env()` 读取的项和多行提示词（如 `SYSTEM_PROMPT`）只展示，需要直接编辑文件。
+- 行为配置的改动只写进 `config.local.py`，**从不修改 `config.py`**；改回默认值（或在菜单里输入 `!`）会删掉对应的本地覆盖。
+  布尔值输入 `y` / `n`，列表用逗号分隔，数字可以写 `8 * 1024 * 1024` 这样的算式。
+- 两个文件都用语法树读写，不会执行；替换时只改值本身，注释保持不变。`SYSTEM_PROMPT` 等多行提示词没法逐项输入，
+  在菜单里输入名字可以把默认写法复制到 `config.local.py`，再用编辑器修改。
 - 写入前会重新解析校验，再原子替换文件。改完照常需要 `/restart`。
 
-也可以非交互地修改，工具会自动判断写进 `.env` 还是 `config.py`，适合脚本或部署时使用：
+也可以非交互地修改，工具会自动判断写进 `.env` 还是 `config.local.py`，适合脚本或部署时使用：
 
 ```bash
 python3 configure.py set PLATFORMS=onebot MASTER_QQ=10001 LLM_MODEL=deepseek-chat
-python3 configure.py unset DEEPSEEK_SEARCH_API_KEY   # 删除 .env 中的键，恢复默认行为
+python3 configure.py unset PLATFORMS DEEPSEEK_SEARCH_API_KEY   # 删除本地覆盖 / .env 的键，恢复默认
 ```
 
 密钥写在命令行里会留在 shell 历史中，建议用 `env` 交互填写。
@@ -232,7 +256,7 @@ QQ 号、群号、open_id 一律按**字符串**处理。
 
 ### `config.py` 分段说明
 
-下表列出常用配置及默认值，完整说明见 `config.py` 内的注释。
+下表列出常用配置及默认值，完整说明见 `config.py` 内的注释。要修改哪项，在 `config.local.py` 里重新赋值即可。
 
 #### 运行平台与连接
 
@@ -676,13 +700,25 @@ systemctl daemon-reload && systemctl enable --now nekobot
 | --- | --- |
 | `plugins/`、`tools/` | `/reload`（`/update` 会自动做） |
 | `core/`、`adapters/`、`config.py`、`bot.py` | `/restart` |
-| `.env` | `/restart` |
+| `.env`、`config.local.py` | `/restart` |
 | 依赖（`pyproject.toml` / `uv.lock`） | 先在服务器运行 `uv sync --locked`，再 `/restart` |
 
 标准更新流程：主人私聊 `/update`；如果提示需要重启，再发 `/restart`。
 
 > **从旧版本升级**：早期版本把密钥直接写在 `config.py` 里。升级到 `.env` 版本前，先在服务器上按
 > `.env.example` 创建 `.env` 并填好密钥和账号，再更新代码、重启；否则重启后 QQ、飞书和模型都会因缺少凭证而无法连接。
+
+> **改过 `config.py` 的部署**：个人配置现在放在 `config.local.py`。服务器上的 `config.py` 有本地改动时，
+> `/update` 会因冲突失败。在服务器上执行一次迁移：
+>
+> ```bash
+> git stash push -- config.py      # 暂存你对 config.py 的改动
+> git pull --ff-only               # 更新代码
+> python3 configure.py migrate     # 把暂存里改过的配置项写进 config.local.py（会先列出来让你确认）
+> git stash drop                   # 确认无误后丢弃暂存
+> ```
+>
+> 之后发 `/restart`。迁移只处理 `NAME = 值` 形式的配置项，注释等其他改动不会带过去。
 
 ### QQ 掉线监控
 
@@ -741,7 +777,8 @@ JSON 文件采用原子写入（先写临时文件再替换），异常中断不
 
 **归档内容**
 
-- 实际配置：`config.py`、`.env` / `.env.*`、Compose 配置、`config/` / `configs/` 目录；
+- 实际配置：`config.py`、`config.local.py`、`.env` / `.env.*`、Compose 配置、`config/` / `configs/` 目录；
+  `DATA_DIR` / `STICKER_DIR` 写在 `config.local.py` 里时以它为准，恢复时需要改写的路径也写进 `config.local.py`；
 - 完整的 `DATA_DIR`（包括将来新增的数据文件，以及部署在其中的 NapCat 配置、QQ 登录数据等）；
 - 仓库中其他未被 Git 跟踪的本地文件，例如自建插件。排除 `.git`、虚拟环境、编译缓存、`backups/` 等。
 
@@ -799,10 +836,11 @@ python backup.py restore /安全目录/neko-state.zip
 
 ```
 bot.py               # 入口：获取进程锁、创建 adapter、事件分发、定时落盘
-config.py            # 行为配置（密钥从 .env 读取）
+config.py            # 行为配置的默认值（密钥从 .env 读取）
+config.local.py      # 个人配置，覆盖 config.py 的默认值（gitignore，自行创建）
 .env.example         # .env 模板
 backup.py            # 离线导出 / 校验 / 恢复命令行
-configure.py         # 交互式配置 .env / config.py 的命令行工具
+configure.py         # 交互式配置 .env / config.local.py 的命令行工具
 adapters/            # 平台适配器（自动注册）
   onebot.py          #   OneBot/QQ：WS 长连接、消息段解析与发送
   onebot_messages.py #   QQ 消息段 / CQ 码、转发入口与单层内容解析
@@ -810,6 +848,7 @@ adapters/            # 平台适配器（自动注册）
   feishu.py          #   飞书/Lark：lark-oapi 长连接、消息归一与发送
 core/                # 平台无关的框架核心
   env.py             #   读取 .env 与环境变量
+  local_config.py    #   加载 config.local.py，重新计算依赖它的默认值
   bot.py             #   Bot 发送抽象 + 富消息段（TextSeg / ImageSeg）
   adapter.py         #   Adapter 抽象 + 平台注册表
   event.py           #   平台无关的 MessageEvent（to_me / command_text / session_key …）
@@ -914,7 +953,7 @@ async def block_user(event, bot) -> bool:
 
 ### 3. 接入新的 LLM 供应商
 
-OpenAI 兼容接口只需改 `config.py` 的 `LLM_BASE_URL`、`LLM_MODEL` 和 `.env` 的 `LLM_API_KEY`。
+OpenAI 兼容接口只需在 `config.local.py` 里设置 `LLM_BASE_URL`、`LLM_MODEL`，并在 `.env` 里填 `LLM_API_KEY`。
 注意图片输入和思考参数需要该接口支持；非 DeepSeek 官方地址时联网搜索默认关闭，可单独配置 `DEEPSEEK_SEARCH_API_KEY`。
 
 协议不兼容时，在 `core/llm.py` 写一个 `LLMProvider` 子类：
@@ -1068,13 +1107,17 @@ QQ 可能已被风控下线，而 NapCat 仍报告在线。主人私聊 `/probe`
 `LLM_BASE_URL` 不是 DeepSeek 官方地址时默认关闭，需在 `.env` 配 `DEEPSEEK_SEARCH_API_KEY`；也检查 `LLM_ENABLE_TOOLS`。
 
 **改了配置没生效**
-`config.py` 和 `.env` 只在启动时读取，需要 `/restart`；`/reload` 只重载插件和工具。
+`config.py`、`config.local.py` 和 `.env` 只在启动时读取，需要 `/restart`；`/reload` 只重载插件和工具。
+另外检查名字有没有拼错：启动日志和 `python3 configure.py show` 会提示 `config.local.py` 里不认识的配置项。
+
+**`/update` 提示 config.py 有本地改动、拉取失败**
+个人配置应写在 `config.local.py`，见[更新与升级](#更新与升级)里的迁移步骤。
 
 ---
 
 ## 安全与隐私
 
-- **不要把密钥写进 `config.py` 或提交到 Git**，只写在 `.env` 或进程环境变量中。密钥一旦进入 Git 历史，即使后来删除也能被找回，应立即到对应平台更换。
+- **不要把密钥写进 `config.py` / `config.local.py` 或提交到 Git**，只写在 `.env` 或进程环境变量中。密钥一旦进入 Git 历史，即使后来删除也能被找回，应立即到对应平台更换。
 - 主人命令可以执行 `git`、重启进程和 NapCat，`MASTER_QQ` / `MASTER_FEISHU` 务必填对。命令不加 `/` 也能匹配，
   主人私聊发「update」「restart」这样的单词同样会执行。
 - 填了 `MASTER_QQ` 时，主人 QQ 号会写进人设提示词，随每次私聊和群聊请求发给模型服务；群聊时间线里也包含每位发言人的用户 ID。

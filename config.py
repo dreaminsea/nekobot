@@ -1,14 +1,24 @@
 """
-全局配置 —— 改这里就行喵~
+全局配置的默认值 —— 个人配置不要改这里喵~
 
 所有模块统一从这里读配置，不要在别处硬编码。
 配置值沿用 reference.py。
 
-密钥、token 和主人/群号等个人信息不写在这里：放到项目根目录的 `.env`（已在 .gitignore），
+本文件随代码一起更新，直接修改会让 /update（git pull）冲突。要改哪项，就在项目根目录的
+`config.local.py`（已在 .gitignore）里重新赋值，只写要改的项，例如：
+
+    LLM_MODEL = "deepseek-chat"
+    BOT_NAMES = BOT_NAMES + ["小喵"]   # 可以引用这里的默认值
+
+也可以运行 `python3 configure.py config` 交互修改。依赖被改项的默认值会自动重新计算，
+见文件末尾和 core/local_config.py。
+
+密钥、token 和主人/群号等个人信息放到项目根目录的 `.env`（已在 .gitignore），
 格式见 `.env.example`；同名进程环境变量优先。改完需完整重启 bot（/reload 不会重读）。
 """
 
 from core.env import env, env_list
+from core.local_config import load_local
 
 # ============================================================
 #  运行平台 —— 选择连接哪个 IM（onebot / feishu …）
@@ -227,3 +237,9 @@ STICKER_ANALYZE_PROMPT = """你负责整理聊天表情包库。只分析附带�
 只输出一个 JSON 对象：
 {"is_sticker": true或false, "should_save": true或false, "meaning": "简短中文含义/心情（不超过40字）", "comment": "中文注释：画面/文字、表达的情绪以及适合在什么场景发送（不超过240字）", "tags": ["检索关键词，最多8个，每个不超过20字"], "reason": "收藏或不收藏的简短理由"}
 只有 is_sticker 和 should_save 都为 true 才会收藏，此时 meaning、comment、tags 必须有实际内容；否则可留空。"""
+
+# ============================================================
+#  本地配置 —— config.local.py 覆盖以上默认值（这段必须留在文件末尾）
+# ============================================================
+# 依赖被覆盖项的默认值（如 AMBIENT_REPLY_MODEL 跟随 LLM_MODEL）会按上面的写法重新计算。
+globals().update(load_local(globals()))

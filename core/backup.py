@@ -36,6 +36,10 @@ CONFIG_FILES = {"config.py", "compose.yaml", "compose.yml", "compose.override.ya
                 "docker-compose.override.yaml", "docker-compose.override.yml", ".env"}
 
 
+# 覆盖 config.py 默认值的本地配置（core/local_config.py），DATA_DIR / STICKER_DIR 也可能写在这里。
+LOCAL_CONFIG = "config.local.py"
+
+
 class BackupError(ValueError):
     pass
 
@@ -84,11 +88,15 @@ def _check_source(name: str, protected: set[str], *, tree: bool = False) -> None
         raise BackupError(f"备份不能覆盖仓库源码: {name}")
 
 
-def _assignments(text: str) -> dict[str, ast.expr]:
+def _parse(text: str, name: str) -> ast.Module:
     try:
-        tree = ast.parse(text)
+        return ast.parse(text)
     except SyntaxError as exc:
-        raise BackupError("config.py 语法错误，无法定位数据配置") from exc
+        raise BackupError(f"{name} 语法错误，无法定位数据配置") from exc
+
+
+def _assignments(text: str, name: str = "config.py") -> dict[str, ast.expr | None]:
+    tree = _parse(text, name)
     found = {}
     for node in tree.body:
         targets = node.targets if isinstance(node, ast.Assign) else (
@@ -96,9 +104,25 @@ def _assignments(text: str) -> dict[str, ast.expr]:
         for target in targets:
             if isinstance(target, ast.Name) and target.id in {"DATA_DIR", "STICKER_DIR"}:
                 if target.id in found or node.value is None or len(targets) != 1:
-                    raise BackupError(f"config.py 中 {target.id} 必须使用单独、唯一的顶层赋值")
+                    raise BackupError(f"{name} 中 {target.id} 必须使用单独、唯一的顶层赋值")
                 found[target.id] = node.value
+    if name == LOCAL_CONFIG:
+        # 本地文件可能在 if 等语句里赋值，静态无法确定取值：记为 None，需要显式指定目录。
+        stores = [n.id for n in ast.walk(tree) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)]
+        for key in ("DATA_DIR", "STICKER_DIR"):
+            if stores.count(key) > (key in found):
+                found[key] = None
     return found
+
+
+def _uses_local(text: str) -> bool:
+    """config.py 是否在末尾加载 config.local.py；旧版 config.py 不会读取本地文件。"""
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return False
+    return any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "load_local"
+               for n in ast.walk(tree))
 
 
 def _settings(root: Path, data_dir: str | None, sticker_dir: str | None) -> dict[str, str]:
@@ -107,20 +131,30 @@ def _settings(root: Path, data_dir: str | None, sticker_dir: str | None) -> dict
     if not stat.S_ISREG(path.lstat().st_mode):
         raise BackupError("config.py 必须是普通文件")
     text = path.read_text(encoding="utf-8")
-    nodes = _assignments(text)
+    sources = [("config.py", _assignments(text))]
+    local = root / LOCAL_CONFIG
+    if _uses_local(text) and os.path.lexists(local):
+        _no_links(local)
+        if not stat.S_ISREG(local.lstat().st_mode):
+            raise BackupError(f"{LOCAL_CONFIG} 必须是普通文件")
+        sources.insert(0, (LOCAL_CONFIG, _assignments(local.read_text(encoding="utf-8-sig"), LOCAL_CONFIG)))
     result = {}
     for key, override, default in (("DATA_DIR", data_dir, "data"),
                                     ("STICKER_DIR", sticker_dir, "stickers")):
+        found = next(((name, nodes[key]) for name, nodes in sources if key in nodes), None)
         if override is not None:
             value = override
-        elif key not in nodes:
+        elif found is None:
             value = default
         else:
             try:
-                value = ast.literal_eval(nodes[key])
+                if found[1] is None:
+                    raise ValueError
+                value = ast.literal_eval(found[1])
             except (ValueError, TypeError) as exc:
                 flag = "--data-dir" if key == "DATA_DIR" else "--sticker-dir"
-                raise BackupError(f"{key} 不是字符串常量，请用 {flag} 显式指定；备份不会执行配置代码") from exc
+                raise BackupError(f"{found[0]} 中 {key} 不是字符串常量，请用 {flag} 显式指定；"
+                                  "备份不会执行配置代码") from exc
         if not isinstance(value, str) or not value:
             raise BackupError(f"{key} 必须是非空目录字符串")
         result[key] = value
@@ -511,30 +545,44 @@ def inspect_backup(path: Path) -> dict:
 
 
 def _relocate(stage: Path, root: Path, manifest: dict) -> None:
-    path = stage / "config.py"
-    content = path.read_bytes()
-    text = content.decode("utf-8")
-    nodes = _assignments(text)
-    lines = content.splitlines(keepends=True)
+    config = stage / "config.py"
+    local = stage / LOCAL_CONFIG
+    # 恢复后的 config.py 会读取 config.local.py 时，数据目录以本地文件为准，改写也写进本地文件，
+    # 保持随代码更新的 config.py 不变；本地文件不在备份里时（不会被安装）仍写进 config.py。
+    use_local = (_uses_local(config.read_text(encoding="utf-8")) and
+                 any(e["path"] == LOCAL_CONFIG and e["kind"] == "file" for e in manifest["entries"]))
+    nodes = {path: _assignments(path.read_text(encoding="utf-8-sig" if path == local else "utf-8"), path.name)
+             for path in ((local, config) if use_local else (config,))}
+    target = local if use_local else config
     edits = []
     append = []
     for key, value in manifest["config_paths"].items():
-        node = nodes.get(key)
-        if node is None:
+        path = next((p for p in nodes if key in nodes[p]), None)
+        if path is None:
             append.append(f"\n{key} = {value!r}\n")
-        else:
-            start = sum(map(len, lines[:node.lineno - 1])) + node.col_offset
-            end = sum(map(len, lines[:node.end_lineno - 1])) + node.end_col_offset
-            # 相对路径保持原始格式/注释；绝对路径或动态配置才需要改写。
-            try:
-                unchanged = ast.literal_eval(node) == value
-            except (ValueError, TypeError):
-                unchanged = False
-            if not unchanged:
-                edits.append((start, end, repr(value).encode("utf-8")))
-    for start, end, value in sorted(edits, reverse=True):
+            continue
+        node = nodes[path][key]
+        # 相对路径保持原始格式/注释；绝对路径或动态配置才需要改写。
+        try:
+            unchanged = node is not None and ast.literal_eval(node) == value
+        except (ValueError, TypeError):
+            unchanged = False
+        if unchanged:
+            continue
+        if path == target and node is not None:
+            edits.append((node, repr(value).encode("utf-8")))
+        else:  # 默认值在 config.py，或本地写法无法改写：在目标文件末尾重新赋值覆盖
+            append.append(f"\n{key} = {value!r}\n")
+    content = target.read_bytes().removeprefix(b"\xef\xbb\xbf")  # 列偏移按去掉 BOM 后的文本计算
+    lines = content.splitlines(keepends=True)
+    spans = []
+    for node, value in edits:
+        start = sum(map(len, lines[:node.lineno - 1])) + node.col_offset
+        end = sum(map(len, lines[:node.end_lineno - 1])) + node.end_col_offset
+        spans.append((start, end, value))
+    for start, end, value in sorted(spans, reverse=True):
         content = content[:start] + value + content[end:]
-    path.write_bytes(content + "".join(append).encode("utf-8"))
+    target.write_bytes(content + "".join(append).encode("utf-8"))
     index = stage / manifest["config_paths"]["DATA_DIR"] / "stickers.json"
     if manifest["sticker_paths"]:
         records = json.loads(index.read_text(encoding="utf-8"))
